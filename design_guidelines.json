@@ -1,0 +1,170 @@
+{
+  "app_name": "ZoomIntern",
+  "brand_identity": {
+    "name": "ZoomIntern",
+    "ceo_name": "Abhishek Singh Tomar",
+    "tagline": "Real internships. Verified certificates. Futures woven here.",
+    "aesthetic": "High-impact dark mode with vibrant amber yellow action buttons and emerald teal verification badges. Technical, authoritative, yet approachable.",
+    "theme": "dark"
+  },
+  "typography": {
+    "headline_font": "'Barlow Condensed', 'Bebas Neue', 'Outfit', sans-serif",
+    "body_font": "'Plus Jakarta Sans', 'Inter', sans-serif",
+    "certificate_font": "'Cinzel', 'Playfair Display', serif",
+    "signature_font": "'Great Vibes', 'Dancing Script', cursive",
+    "font_imports": [
+      "https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;1,700&family=Cinzel:wght@600;700;900&family=Great+Vibes&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+    ],
+    "scale": {
+      "hero_headline": "text-4xl sm:text-5xl lg:text-6xl uppercase tracking-tight font-extrabold text-white",
+      "section_title": "text-3xl sm:text-4xl font-bold tracking-tight text-white",
+      "card_title": "text-xl font-semibold text-zinc-100",
+      "body_text": "text-base text-zinc-400 leading-relaxed",
+      "caption": "text-xs font-medium tracking-wider uppercase text-zinc-500"
+    }
+  },
+  "colors": {
+    "canvas": {
+      "main": "#090A0F",
+      "surface": "#12141D",
+      "card": "#181B26",
+      "card_hover": "#1F2332",
+      "border": "#272B3C"
+    },
+    "accents": {
+      "yellow_primary": "#FBBF24",
+      "yellow_hover": "#F59E0B",
+      "yellow_glow": "rgba(251, 191, 36, 0.15)",
+      "teal_verified": "#34D399",
+      "teal_glow": "rgba(52, 211, 153, 0.15)",
+      "navy_certificate": "#0B132B",
+      "gold_border": "#D97706"
+    },
+    "text": {
+      "primary": "#F8FAFC",
+      "secondary": "#94A3B8",
+      "muted": "#64748B",
+      "dark_button_text": "#090A0F"
+    }
+  },
+  "media_assets": {
+    "hero_developer": "https://images.unsplash.com/photo-1549692520-acc6669e2f0c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODR8MHwxfHNlYXJjaHwzfHxzb2Z0d2FyZSUyMGRldmVsb3BlciUyMGludGVybiUyMGNvZGluZyUyMGxhcHRvcHxlbnwwfHx8fDE3OTA1NjY0OTR8MA&ixlib=rb-4.1.0&q=85",
+    "coding_workspace": "https://images.unsplash.com/photo-1575089976121-8ed7b2a54265?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODR8MHwxfHNlYXJjaHwyfHxzb2Z0d2FyZSUyMGRldmVsb3BlciUyMGludGVybiUyMGNvZGluZyUyMGxhcHRvcHxlbnwwfHx8fDE3OTA1NjY0OTR8MA&ixlib=rb-4.1.0&q=85",
+    "laptop_code": "https://images.unsplash.com/photo-1484417894907-623942c8ee29?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODR8MHwxfHNlYXJjaHw0fHxzb2Z0d2FyZSUyMGRldmVsb3BlciUyMGludGVybiUyMGNvZGluZyUyMGxhcHRvcHxlbnwwfHx8fDE3OTA1NjY0OTR8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "layout_and_navigation": {
+    "header": {
+      "background": "bg-[#090A0F]/80 backdrop-blur-xl border-b border-[#272B3C] sticky top-0 z-50",
+      "logo": "Z mark in glowing teal (#34D399) & amber (#FBBF24) with bold white ZoomIntern text",
+      "nav_links": ["Internships", "Certificates", "Verify Certificate"],
+      "action_buttons": [
+        {
+          "label": "Verify a certificate",
+          "style": "bg-[#181B26] hover:bg-[#272B3C] text-zinc-200 border border-[#272B3C] rounded-full px-4 py-2 text-sm font-medium"
+        },
+        {
+          "label": "Apply Now",
+          "style": "bg-[#FBBF24] hover:bg-[#F59E0B] text-[#090A0F] rounded-full px-5 py-2 text-sm font-bold shadow-lg shadow-amber-500/20"
+        }
+      ]
+    },
+    "pages": [
+      {
+        "route": "/",
+        "title": "Home Landing Page",
+        "sections": [
+          "Hero section with stat pill ('32 offers sent'), headline, primary CTAs",
+          "Metrics row (6+ Open Programs, 120+ Industry Mentors, 100% Verifiable Certificates)",
+          "Core Benefits / Feature grid (1:1 Mentorship, 100% Free, Public Verifiable IDs, Real Production Work)",
+          "Featured Internship Programs (Python, C++, Java, Web Dev, Data Science) with FREE badges and apply buttons",
+          "Certificate Showcase ('A credential that proves itself') featuring interactive certificate preview",
+          "Testimonials & Wall of Intern Success",
+          "Call to Action & Footer"
+        ]
+      },
+      {
+        "route": "/internships",
+        "title": "Internships Directory",
+        "features": "Search, area filter (Backend, Frontend, AI/ML, C++), detailed program cards with requirements, perks, apply modal"
+      },
+      {
+        "route": "/verify",
+        "title": "Public Certificate Verification",
+        "features": "Search input for Certificate ID, instant validation, rendered verified certificate badge, full details, download PDF CTA"
+      },
+      {
+        "route": "/admin/login",
+        "title": "Admin Authentication",
+        "features": "Secure login interface for ZoomIntern administrators"
+      },
+      {
+        "route": "/admin/dashboard",
+        "title": "Admin Management Portal",
+        "features": [
+          "Dashboard stats overview (Total certificates issued, active interns, pending applications)",
+          "Issue Certificate Form (Intern Name, Email, Start Date, End Date, Internship Area)",
+          "PDF Live Preview with CEO Abhishek Singh Tomar signature and dynamic QR code",
+          "Send Email trigger to email PDF directly to intern",
+          "Issued Certificates List with revocation / resend options",
+          "Applications Manager to review intern submissions"
+        ]
+      }
+    ]
+  },
+  "certificate_design": {
+    "container": "bg-[#0B132B] border-8 border-[#D97706] rounded-xl p-8 relative overflow-hidden text-center text-white shadow-2xl",
+    "header": "CERTIFICATE OF COMPLETION in elegant golden Cinzel font",
+    "subtitle": "THIS IS PROUDLY PRESENTED TO",
+    "intern_name": "Dynamic intern name in large gold serif font with underline accent",
+    "body": "For successfully completing the intensive internship in [Area] from [Start Date] to [End Date], demonstrating exceptional technical excellence and dedication.",
+    "footer": {
+      "left": "Verification QR Code & Certificate ID",
+      "center": "Official Gold ZoomIntern Embossed Seal",
+      "right": "Signature of CEO Abhishek Singh Tomar with title 'Founder & CEO, ZoomIntern'"
+    }
+  },
+  "motion_and_interactions": {
+    "hover": "Subtle translate-y (-2px) and glow effect on cards and buttons",
+    "page_transitions": "Framer motion fade-in and slide-up stagger for lists",
+    "modals": "Backdrop blur with scale entrance animation"
+  },
+  "accessibility": {
+    "contrast_ratio": "APCA & WCAG AA compliant contrast with light text on dark surfaces",
+    "focus_states": "High contrast amber focus rings focus:ring-2 focus:ring-[#FBBF24]",
+    "reduced_motion": "Supported via prefers-reduced-motion media query"
+  },
+  "testing": {
+    "data_testid_required": true,
+    "convention": "kebab-case, role-based",
+    "key_elements": [
+      "data-testid=\"nav-logo\"",
+      "data-testid=\"nav-internships-link\"",
+      "data-testid=\"nav-verify-link\"",
+      "data-testid=\"nav-apply-btn\"",
+      "data-testid=\"hero-apply-btn\"",
+      "data-testid=\"verify-input\"",
+      "data-testid=\"verify-submit-btn\"",
+      "data-testid=\"certificate-card\"",
+      "data-testid=\"admin-login-form\"",
+      "data-testid=\"admin-email-input\"",
+      "data-testid=\"admin-password-input\"",
+      "data-testid=\"admin-submit-btn\"",
+      "data-testid=\"issue-cert-form\"",
+      "data-testid=\"intern-name-input\"",
+      "data-testid=\"intern-email-input\"",
+      "data-testid=\"intern-area-select\"",
+      "data-testid=\"intern-start-date\"",
+      "data-testid=\"intern-end-date\"",
+      "data-testid=\"issue-cert-submit-btn\"",
+      "data-testid=\"send-email-btn\"",
+      "data-testid=\"download-pdf-btn\""
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the dark theme (#090A0F canvas) with yellow (#FBBF24) primary actions and teal (#34D399) badges.",
+    "Implement the exact CEO name 'Abhishek Singh Tomar' in the certificate signature block.",
+    "Provide full functionality for certificate issuance, verification by Certificate ID, PDF download/preview, and simulated/real email sending.",
+    "Ensure all interactive elements have data-testid attributes.",
+    "Use JavaScript (.js / .jsx) components as per workspace setup."
+  ]
+}

@@ -1,0 +1,94 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;0,900;1,700&family=Cinzel:wght@600;700;900&family=Great+Vibes&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #090A0F;
+  --surface: #12141D;
+  --card: #181B26;
+  --card-hover: #1F2332;
+  --border: #272B3C;
+  --yellow: #FBBF24;
+  --yellow-hover: #F59E0B;
+  --teal: #34D399;
+  --navy: #0B132B;
+  --gold: #D97706;
+  --text: #F8FAFC;
+  --muted: #94A3B8;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-condensed { font-family: 'Barlow Condensed', 'Bebas Neue', sans-serif; }
+.font-serif-cert { font-family: 'Cinzel', 'Playfair Display', serif; }
+.font-signature { font-family: 'Great Vibes', 'Dancing Script', cursive; }
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+@layer base {
+  :root {
+    --background: 230 20% 5%;
+    --foreground: 210 40% 98%;
+    --card: 230 20% 10%;
+    --card-foreground: 210 40% 98%;
+    --popover: 230 20% 10%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 43 96% 56%;
+    --primary-foreground: 230 20% 5%;
+    --secondary: 230 15% 15%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 230 15% 15%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 230 15% 18%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 230 15% 20%;
+    --input: 230 15% 15%;
+    --ring: 43 96% 56%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* Marquee */
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.marquee-track {
+  display: flex;
+  gap: 3rem;
+  animation: marquee 30s linear infinite;
+  white-space: nowrap;
+}
+
+/* Grid noise */
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 3px 3px;
+  pointer-events: none;
+}
+
+/* Focus */
+input:focus, textarea:focus, select:focus, button:focus-visible {
+  outline: 2px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+::selection { background: var(--yellow); color: var(--bg); }
