@@ -1,11 +1,10 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response, File, UploadFile, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response, File, UploadFile, Request, Form, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta
 import os
 import io
@@ -198,6 +197,8 @@ class Program(BaseModel):
     tags: List[str] = []
     description: str = ""
     active: bool = True
+    final_project_enabled: bool = True
+    final_project_instructions: str = "Submit a single PDF describing your final project, approach, and outcomes."
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -209,6 +210,90 @@ class ProgramIn(BaseModel):
     tags: List[str] = []
     description: str = ""
     active: bool = True
+    final_project_enabled: bool = True
+    final_project_instructions: str = "Submit a single PDF describing your final project, approach, and outcomes."
+
+
+class QuizQuestionIn(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    prompt: str = Field(min_length=3, max_length=500)
+    question_type: Literal["mcq", "descriptive"]
+    options: List[str] = Field(default_factory=list)
+    correct_answer: Optional[str] = None
+
+
+class QuizQuestionPublic(BaseModel):
+    id: str
+    prompt: str
+    question_type: Literal["mcq", "descriptive"]
+    options: List[str] = Field(default_factory=list)
+
+
+class LessonIn(BaseModel):
+    title: str = Field(min_length=2, max_length=120)
+    description: str = Field(default="", max_length=1200)
+    video_url: str = Field(min_length=8, max_length=500)
+    position: int = Field(ge=1, le=200)
+    requires_project: bool = False
+    project_instructions: str = Field(default="", max_length=1200)
+    quiz_pass_score: int = Field(default=60, ge=0, le=100)
+    quiz_questions: List[QuizQuestionIn] = Field(default_factory=list)
+
+
+class LessonAdmin(LessonIn):
+    id: str
+    program_id: str
+    created_at: str
+
+
+class LessonPublic(BaseModel):
+    id: str
+    program_id: str
+    title: str
+    description: str
+    video_url: str
+    position: int
+    requires_project: bool
+    project_instructions: str
+    quiz_pass_score: int
+    quiz_questions: List[QuizQuestionPublic] = Field(default_factory=list)
+
+
+class ClassroomOut(BaseModel):
+    program: Program
+    lessons: List[LessonPublic]
+
+
+class QuizAnswerIn(BaseModel):
+    question_id: str
+    answer: str = Field(min_length=1, max_length=3000)
+
+
+class QuizSubmissionIn(BaseModel):
+    intern_email: EmailStr
+    answers: List[QuizAnswerIn] = Field(default_factory=list)
+
+
+class QuizResult(BaseModel):
+    score: Optional[int] = None
+    passed: Optional[bool] = None
+    descriptive_pending_review: bool = False
+    status: str
+
+
+class ProjectSubmissionOut(BaseModel):
+    id: str
+    program_id: str
+    lesson_id: Optional[str] = None
+    submission_type: Literal["class", "final"]
+    original_filename: str
+    status: str
+    submitted_at: str
+    receipt_token: Optional[str] = None
+
+
+class ProjectSubmissionAdmin(ProjectSubmissionOut):
+    intern_email: EmailStr
 
 
 class Application(BaseModel):
@@ -390,6 +475,52 @@ def _verify_url_for(cert_id: str) -> str:
     return f"{os.environ['PUBLIC_BASE_URL'].rstrip('/')}/verify?id={cert_id}"
 
 
+def _validate_lesson(body: LessonIn) -> None:
+    if not re.match(r"^https?://(?:www\.)?(?:youtube\.com|youtu\.be)/", body.video_url.strip(), re.I):
+        raise HTTPException(status_code=400, detail="Use a valid YouTube or youtu.be video link")
+    if body.requires_project and not body.project_instructions.strip():
+        raise HTTPException(status_code=400, detail="Add instructions for this class project PDF")
+    for question in body.quiz_questions:
+        if question.question_type == "mcq":
+            options = [option.strip() for option in question.options if option.strip()]
+            if len(options) < 2 or not question.correct_answer or question.correct_answer not in options:
+                raise HTTPException(status_code=400, detail="Each MCQ needs at least two options and a matching correct answer")
+        elif question.options or question.correct_answer:
+            raise HTTPException(status_code=400, detail="Descriptive questions cannot include options or a correct answer")
+
+
+def _lesson_public(lesson: dict) -> dict:
+    return {
+        "id": lesson["id"],
+        "program_id": lesson["program_id"],
+        "title": lesson["title"],
+        "description": lesson.get("description", ""),
+        "video_url": lesson["video_url"],
+        "position": lesson["position"],
+        "requires_project": lesson.get("requires_project", False),
+        "project_instructions": lesson.get("project_instructions", ""),
+        "quiz_pass_score": lesson.get("quiz_pass_score", 60),
+        "quiz_questions": [
+            {
+                "id": question["id"],
+                "prompt": question["prompt"],
+                "question_type": question["question_type"],
+                "options": question.get("options", []),
+            }
+            for question in lesson.get("quiz_questions", [])
+        ],
+    }
+
+
+async def _ensure_program_application(program_id: str, email: str) -> None:
+    application = await db.applications.find_one(
+        {"program_id": program_id, "email": email.lower()},
+        {"_id": 0},
+    )
+    if not application:
+        raise HTTPException(status_code=403, detail="Apply to this internship with this email before submitting work")
+
+
 async def _signature_image_bytes() -> bytes | None:
     signature = await db.settings.find_one({"key": "ceo_signature"}, {"_id": 0})
     if not signature:
@@ -452,6 +583,130 @@ async def get_program(program_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Program not found")
     return doc
+
+
+@api_router.get("/programs/{program_id}/classroom", response_model=ClassroomOut)
+async def get_program_classroom(program_id: str):
+    program = await db.programs.find_one({"id": program_id, "active": True}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=404, detail="Internship program not found")
+    lessons = await db.lessons.find({"program_id": program_id}, {"_id": 0}).sort("position", 1).to_list(200)
+    return {"program": program, "lessons": [_lesson_public(lesson) for lesson in lessons]}
+
+
+@api_router.post("/programs/{program_id}/lessons/{lesson_id}/quiz", response_model=QuizResult)
+async def submit_lesson_quiz(program_id: str, lesson_id: str, body: QuizSubmissionIn):
+    email = str(body.intern_email).lower()
+    await _ensure_program_application(program_id, email)
+    lesson = await db.lessons.find_one({"id": lesson_id, "program_id": program_id}, {"_id": 0})
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Class not found")
+    questions = lesson.get("quiz_questions", [])
+    if not questions:
+        raise HTTPException(status_code=400, detail="This class has no quiz")
+    provided = {answer.question_id: answer.answer.strip() for answer in body.answers}
+    mcqs = [question for question in questions if question["question_type"] == "mcq"]
+    descriptive_pending = any(question["question_type"] == "descriptive" for question in questions)
+    correct = sum(provided.get(question["id"], "").casefold() == question["correct_answer"].casefold() for question in mcqs)
+    score = round((correct / len(mcqs)) * 100) if mcqs else None
+    passed = score >= lesson.get("quiz_pass_score", 60) if score is not None else None
+    record = {
+        "id": str(uuid.uuid4()),
+        "program_id": program_id,
+        "lesson_id": lesson_id,
+        "intern_email": email,
+        "answers": [answer.model_dump() for answer in body.answers],
+        "score": score,
+        "passed": passed,
+        "descriptive_pending_review": descriptive_pending,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.quiz_submissions.insert_one(record)
+    return QuizResult(
+        score=score,
+        passed=passed,
+        descriptive_pending_review=descriptive_pending,
+        status="submitted",
+    )
+
+
+@api_router.post("/programs/{program_id}/project-submissions", response_model=ProjectSubmissionOut)
+async def submit_project_pdf(
+    program_id: str,
+    intern_email: EmailStr = Form(...),
+    submission_type: str = Form(...),
+    lesson_id: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+):
+    email = str(intern_email).lower()
+    if submission_type not in {"class", "final"}:
+        raise HTTPException(status_code=400, detail="Submission type must be class or final")
+    program = await db.programs.find_one({"id": program_id, "active": True}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=404, detail="Internship program not found")
+    await _ensure_program_application(program_id, email)
+    if submission_type == "class":
+        lesson = await db.lessons.find_one({"id": lesson_id, "program_id": program_id}, {"_id": 0})
+        if not lesson or not lesson.get("requires_project"):
+            raise HTTPException(status_code=400, detail="This class does not require a project PDF")
+    elif not program.get("final_project_enabled", True):
+        raise HTTPException(status_code=400, detail="This internship has no final project submission")
+    if file.content_type != "application/pdf" or not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Upload a PDF file")
+    data = await file.read()
+    if not data or len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Project PDF must be between 1 byte and 10 MB")
+    submission_id = str(uuid.uuid4())
+    storage_path = f"{APP_NAME}/uploads/project-submissions/{program_id}/{submission_id}.pdf"
+    try:
+        result = await asyncio.to_thread(_put_storage_object, storage_path, data, "application/pdf")
+    except Exception as error:
+        logger.error("Project PDF upload failed: %s", error)
+        raise HTTPException(status_code=502, detail="Project PDF upload could not be completed") from error
+    receipt_token = secrets.token_urlsafe(24)
+    submitted_at = datetime.now(timezone.utc).isoformat()
+    record = {
+        "id": submission_id,
+        "program_id": program_id,
+        "lesson_id": lesson_id if submission_type == "class" else None,
+        "submission_type": submission_type,
+        "intern_email": email,
+        "original_filename": Path(file.filename or "project.pdf").name,
+        "storage_path": result["path"],
+        "content_type": "application/pdf",
+        "size": result["size"],
+        "receipt_hash": hashlib.sha256(receipt_token.encode("utf-8")).hexdigest(),
+        "status": "submitted",
+        "is_deleted": False,
+        "submitted_at": submitted_at,
+    }
+    await db.project_submissions.insert_one(record)
+    return ProjectSubmissionOut(
+        id=submission_id,
+        program_id=program_id,
+        lesson_id=record["lesson_id"],
+        submission_type=submission_type,
+        original_filename=record["original_filename"],
+        status="submitted",
+        submitted_at=submitted_at,
+        receipt_token=receipt_token,
+    )
+
+
+@api_router.get("/project-submissions/{submission_id}/download")
+async def download_own_project_pdf(submission_id: str, receipt: str = Query(..., min_length=20)):
+    submission = await db.project_submissions.find_one({"id": submission_id, "is_deleted": False}, {"_id": 0})
+    if not submission or not secrets.compare_digest(
+        submission["receipt_hash"], hashlib.sha256(receipt.encode("utf-8")).hexdigest()
+    ):
+        raise HTTPException(status_code=404, detail="Project submission not found")
+    data = await asyncio.to_thread(_get_storage_object, submission["storage_path"])
+    filename = submission["original_filename"]
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @api_router.post("/applications", response_model=Application)
@@ -637,6 +892,67 @@ async def delete_program(program_id: str, admin=Depends(require_admin)):
     return {"deleted": res.deleted_count}
 
 
+# --- classroom admin ---
+@api_router.get("/admin/programs/{program_id}/lessons", response_model=List[LessonAdmin])
+async def list_admin_lessons(program_id: str, admin=Depends(require_admin)):
+    return await db.lessons.find({"program_id": program_id}, {"_id": 0}).sort("position", 1).to_list(200)
+
+
+@api_router.post("/admin/programs/{program_id}/lessons", response_model=LessonAdmin)
+async def create_lesson(program_id: str, body: LessonIn, admin=Depends(require_admin)):
+    if not await db.programs.find_one({"id": program_id}, {"_id": 0}):
+        raise HTTPException(status_code=404, detail="Program not found")
+    _validate_lesson(body)
+    lesson = body.model_dump()
+    lesson.update({
+        "id": str(uuid.uuid4()),
+        "program_id": program_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    await db.lessons.insert_one(lesson.copy())
+    return lesson
+
+
+@api_router.put("/admin/programs/{program_id}/lessons/{lesson_id}", response_model=LessonAdmin)
+async def update_lesson(program_id: str, lesson_id: str, body: LessonIn, admin=Depends(require_admin)):
+    existing = await db.lessons.find_one({"id": lesson_id, "program_id": program_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Class not found")
+    _validate_lesson(body)
+    update = body.model_dump()
+    await db.lessons.update_one({"id": lesson_id, "program_id": program_id}, {"$set": update})
+    existing.update(update)
+    return existing
+
+
+@api_router.delete("/admin/programs/{program_id}/lessons/{lesson_id}")
+async def delete_lesson(program_id: str, lesson_id: str, admin=Depends(require_admin)):
+    result = await db.lessons.delete_one({"id": lesson_id, "program_id": program_id})
+    return {"deleted": result.deleted_count}
+
+
+@api_router.get("/admin/programs/{program_id}/project-submissions", response_model=List[ProjectSubmissionAdmin])
+async def list_project_submissions(program_id: str, admin=Depends(require_admin)):
+    docs = await db.project_submissions.find(
+        {"program_id": program_id, "is_deleted": False}, {"_id": 0, "receipt_hash": 0, "storage_path": 0}
+    ).sort("submitted_at", -1).to_list(1000)
+    return docs
+
+
+@api_router.get("/admin/project-submissions/{submission_id}/download")
+async def download_admin_project_pdf(submission_id: str, admin=Depends(require_admin)):
+    submission = await db.project_submissions.find_one({"id": submission_id, "is_deleted": False}, {"_id": 0})
+    if not submission:
+        raise HTTPException(status_code=404, detail="Project submission not found")
+    data = await asyncio.to_thread(_get_storage_object, submission["storage_path"])
+    filename = submission["original_filename"]
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 # --- applications admin ---
 @api_router.get("/admin/applications", response_model=List[Application])
 async def list_applications(admin=Depends(require_admin)):
@@ -787,15 +1103,6 @@ async def _send_certificate_email(cert: Certificate):
 
 
 app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ["CORS_ORIGINS"].split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

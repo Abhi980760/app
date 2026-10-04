@@ -29,10 +29,14 @@ Build an internship-providing website (ZoomIntern) with an admin portal where th
 - CEO signature uploader stored through managed object storage and rendered in new certificate PDFs
 - Optional E.164 WhatsApp number on certificates plus a one-click, prefilled WhatsApp sharing handoff
 - Admin session hardening: httpOnly session cookie, bearer fallback, five-attempt/15-minute login lockout, password-drift seed updates, and explicit CORS origin policy
+- Program Classroom (`/programs/:programId`): public class sequencing, YouTube lessons, configurable pass-score quizzes, and mixed MCQ/descriptive answers
+- Admin Classroom Builder (`/admin/programs/:programId/classes`): add/delete classes, YouTube links, class order, selected class-level PDF project requirements, and final-project settings
+- Private project submission system: PDF-only class/final uploads, application-email validation, managed object storage, opaque receipt tokens, and protected PDF download routes for interns/admins
 
 ## Test Results
 - Iteration 1: 9/9 backend feature/regression tests passed, including managed email delivery, signature upload, PDF output, WhatsApp handoff, intern access request, invalid code handling, and public verification. Report: `/app/test_reports/iteration_1.json`.
 - Manual validation: PDF download (200 / `application/pdf`), cookie session, login lockout (`401 × 5`, then `429`), frontend production build, and desktop/mobile portal overflow checks all passed.
+- Iteration 2: 22/22 backend regression tests passed for classroom setup, answer privacy, quiz scoring, class/final PDF uploads, receipt-protected downloads, application gating, and managed preview CORS preflight. Frontend classroom builder and public classroom flows passed in Playwright at desktop and mobile widths. Report: `/app/test_reports/iteration_2.json`.
 
 ## Admin Credentials
 See `/app/memory/test_credentials.md`.
@@ -40,8 +44,9 @@ See `/app/memory/test_credentials.md`.
 ## Backlog / Next
 - P1: Add a custom verified sending domain and reply inbox when ZoomIntern has one.
 - P1: Optional direct WhatsApp Business provider integration for automated sends; current implementation opens a compliant prefilled WhatsApp handoff for the admin to review and send.
-- P2: Assessments with auto-grading before certificate issuance.
+- P1: Add an admin review screen for descriptive quiz answers and submitted project PDFs, with approve/request-changes statuses.
+- P2: Gate certificate issuance behind final-project approval and required quiz completion.
 - P2: Certificate revocation reason/history and a public revocation status view.
 
 ## Last Validation
-- 2026-10-04: Production build, authenticated certificate flows, managed email delivery, PDF generation, portal access request, signature storage, cookie session, and login lockout were verified.
+- 2026-10-04: Production build, authenticated certificate flows, managed email delivery, PDF generation, portal access request, signature storage, cookie session, login lockout, program classroom, quizzes, and project PDF submission workflows were verified.

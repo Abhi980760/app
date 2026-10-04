@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api, API, clearToken, getToken } from "@/lib/api";
-import { LogOut, Plus, Trash2, Download, Send, Award, Users, FileCheck, Layers, ImageUp, MessageCircle } from "lucide-react";
+import { LogOut, Plus, Trash2, Download, Send, Award, Users, FileCheck, Layers, ImageUp, MessageCircle, BookOpen } from "lucide-react";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -264,6 +264,7 @@ function ApplicationsTab({ applications, refresh }) {
 }
 
 function ProgramsTab({ programs, refresh }) {
+  const navigate = useNavigate();
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState(null);
 
@@ -287,8 +288,9 @@ function ProgramsTab({ programs, refresh }) {
               <div className="text-xs text-zinc-500 mt-1">{p.area} · {p.location} · {p.duration_weeks}w · {p.active ? <span className="text-[#34D399]">active</span> : <span className="text-zinc-500">inactive</span>}</div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => setEditing(p)} className="text-xs px-3 h-9 rounded-full border border-[#272B3C] hover:bg-[#181B26]">Edit</button>
-              <button onClick={() => remove(p.id)} className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-red-500/40 text-red-400 hover:bg-red-500/10"><Trash2 className="w-3 h-3" /> Delete</button>
+              <button data-testid={`manage-classes-${p.id}`} onClick={() => navigate(`/admin/programs/${p.id}/classes`)} className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-[#34D399]/40 text-[#34D399] hover:bg-[#34D399]/10"><BookOpen className="w-3 h-3" /> Classes</button>
+              <button data-testid={`edit-program-${p.id}`} onClick={() => setEditing(p)} className="text-xs px-3 h-9 rounded-full border border-[#272B3C] hover:bg-[#181B26]">Edit</button>
+              <button data-testid={`delete-program-${p.id}`} onClick={() => remove(p.id)} className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-red-500/40 text-red-400 hover:bg-red-500/10"><Trash2 className="w-3 h-3" /> Delete</button>
             </div>
           </div>
         ))}
@@ -308,7 +310,8 @@ function ProgramModal({ program, onClose, onSaved }) {
   const [form, setForm] = useState(program ? {
     title: program.title, area: program.area, location: program.location, duration_weeks: program.duration_weeks,
     tags: (program.tags || []).join(", "), description: program.description || "", active: program.active,
-  } : { title: "", area: "Programming", location: "Remote", duration_weeks: 6, tags: "", description: "", active: true });
+    final_project_enabled: program.final_project_enabled ?? true, final_project_instructions: program.final_project_instructions || "Submit a single PDF describing your final project, approach, and outcomes.",
+  } : { title: "", area: "Programming", location: "Remote", duration_weeks: 6, tags: "", description: "", active: true, final_project_enabled: true, final_project_instructions: "Submit a single PDF describing your final project, approach, and outcomes." });
 
   const submit = async (e) => {
     e.preventDefault();

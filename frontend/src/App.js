@@ -8,6 +8,8 @@ import AdminLogin from "@/pages/AdminLogin";
 import AdminDashboard from "@/pages/AdminDashboard";
 import InternLogin from "@/pages/InternLogin";
 import InternDashboard from "@/pages/InternDashboard";
+import ProgramClassroom from "@/pages/ProgramClassroom";
+import AdminClassroom from "@/pages/AdminClassroom";
 
 function App() {
   return (
@@ -21,6 +23,8 @@ function App() {
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/portal" element={<InternLogin />} />
           <Route path="/portal/certificates" element={<InternDashboard />} />
+          <Route path="/programs/:programId" element={<ProgramClassroom />} />
+          <Route path="/admin/programs/:programId/classes" element={<AdminClassroom />} />
         </Routes>
       </BrowserRouter>
       <Toaster theme="dark" position="top-right" richColors />

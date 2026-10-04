@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -81,6 +82,7 @@ export default function Internships() {
 }
 
 function ApplyModal({ program, onClose }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState({ full_name: "", email: "", phone: "", university: "", motivation: "" });
   const [loading, setLoading] = useState(false);
 
@@ -90,7 +92,7 @@ function ApplyModal({ program, onClose }) {
     try {
       await api.post("/applications", { program_id: program.id, ...form });
       toast.success("Application submitted! We'll review and get back to you.");
-      onClose();
+      navigate(`/programs/${program.id}`);
     } catch (err) {
       toast.error("Could not submit application");
     } finally {
@@ -106,7 +108,8 @@ function ApplyModal({ program, onClose }) {
         <h3 className="font-condensed font-black text-3xl">{program.title}</h3>
         <p className="text-sm text-zinc-500 mt-1">{program.location} · {program.duration_weeks} weeks · Free</p>
 
-        <form onSubmit={submit} className="mt-6 space-y-3" data-testid="apply-form">
+        <button data-testid="explore-classes-button" onClick={() => navigate(`/programs/${program.id}`)} type="button" className="mt-5 text-sm text-[#34D399] hover:text-white transition">Explore classes before applying →</button>
+        <form onSubmit={submit} className="mt-4 space-y-3" data-testid="apply-form">
           <Input placeholder="Full name" required value={form.full_name} onChange={(v) => setForm({ ...form, full_name: v })} testid="apply-name" />
           <Input placeholder="Email" type="email" required value={form.email} onChange={(v) => setForm({ ...form, email: v })} testid="apply-email" />
           <Input placeholder="Phone (optional)" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} testid="apply-phone" />
