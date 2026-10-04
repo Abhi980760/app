@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api, API, clearToken, getToken } from "@/lib/api";
-import { LogOut, Plus, Trash2, Download, Send, Award, Users, FileCheck, Layers } from "lucide-react";
+import { LogOut, Plus, Trash2, Download, Send, Award, Users, FileCheck, Layers, ImageUp, MessageCircle } from "lucide-react";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -99,8 +99,14 @@ function StatCard({ icon, label, value, testid }) {
 
 function CertificatesTab({ certificates, programs, refresh }) {
   const today = new Date().toISOString().slice(0, 10);
-  const [form, setForm] = useState({ intern_name: "", intern_email: "", area: "", start_date: "", end_date: "", issue_date: today, send_email: true });
+  const [form, setForm] = useState({ intern_name: "", intern_email: "", intern_phone: "", area: "", start_date: "", end_date: "", issue_date: today, send_email: true });
   const [loading, setLoading] = useState(false);
+  const [signature, setSignature] = useState(null);
+  const [uploadingSignature, setUploadingSignature] = useState(false);
+
+  useEffect(() => {
+    api.get("/admin/signature").then((response) => setSignature(response.data)).catch(() => setSignature(null));
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -112,7 +118,7 @@ function CertificatesTab({ certificates, programs, refresh }) {
     try {
       const r = await api.post("/admin/certificates", form);
       toast.success(`Certificate ${r.data.certificate_id} issued${r.data.email_sent ? " and emailed" : ""}`);
-      setForm({ intern_name: "", intern_email: "", area: "", start_date: "", end_date: "", issue_date: today, send_email: true });
+      setForm({ intern_name: "", intern_email: "", intern_phone: "", area: "", start_date: "", end_date: "", issue_date: today, send_email: true });
       refresh();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to issue certificate");
@@ -132,6 +138,33 @@ function CertificatesTab({ certificates, programs, refresh }) {
     catch (e) { toast.error(e?.response?.data?.detail || "Email failed"); }
   };
 
+  const uploadSignature = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploadingSignature(true);
+    try {
+      const data = new FormData();
+      data.append("file", file);
+      const response = await api.post("/admin/signature", data);
+      setSignature(response.data);
+      toast.success("CEO signature will appear on new certificate PDFs");
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Signature upload failed");
+    } finally {
+      setUploadingSignature(false);
+      event.target.value = "";
+    }
+  };
+
+  const shareWhatsApp = async (cid) => {
+    try {
+      const response = await api.post(`/admin/certificates/${cid}/whatsapp`);
+      window.open(response.data.url, "_blank", "noopener,noreferrer");
+      toast.success("WhatsApp message is ready to send");
+      refresh();
+    } catch (error) { toast.error(error?.response?.data?.detail || "WhatsApp sharing is unavailable"); }
+  };
+
   return (
     <div>
       <div className="rounded-2xl border border-[#272B3C] bg-[#12141D] p-6">
@@ -140,6 +173,7 @@ function CertificatesTab({ certificates, programs, refresh }) {
         <form onSubmit={submit} data-testid="issue-cert-form" className="grid md:grid-cols-2 gap-4">
           <Field label="Intern name *"><input required data-testid="intern-name-input" value={form.intern_name} onChange={(e) => setForm({ ...form, intern_name: e.target.value })} className={inputCls} placeholder="Priya Sharma" /></Field>
           <Field label="Intern email *"><input required type="email" data-testid="intern-email-input" value={form.intern_email} onChange={(e) => setForm({ ...form, intern_email: e.target.value })} className={inputCls} placeholder="priya@example.com" /></Field>
+          <Field label="WhatsApp number (optional)"><input data-testid="intern-whatsapp-input" value={form.intern_phone} onChange={(e) => setForm({ ...form, intern_phone: e.target.value })} className={inputCls} placeholder="+14155552671" /></Field>
           <Field label="Area / Program title *">
             <input required data-testid="intern-area-input" list="areas-list" value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} className={inputCls} placeholder="Python Programming" />
             <datalist id="areas-list">{programs.map((p) => <option key={p.id} value={p.title} />)}</datalist>
@@ -157,6 +191,17 @@ function CertificatesTab({ certificates, programs, refresh }) {
         </form>
       </div>
 
+      <div data-testid="signature-upload-panel" className="mt-5 border border-[#272B3C] bg-[#12141D] p-5 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <div className="font-condensed font-black text-xl">CEO signature</div>
+          <p data-testid="signature-upload-status" className="text-sm text-zinc-500 mt-1">{signature?.uploaded ? `${signature.filename} uploaded — used in certificate PDFs.` : "Using the generated signature until an image is uploaded."}</p>
+        </div>
+        <label data-testid="signature-upload-label" className="h-10 px-4 rounded-full border border-[#FBBF24]/50 text-[#FBBF24] hover:bg-[#FBBF24]/10 transition inline-flex items-center gap-2 cursor-pointer text-sm font-medium">
+          <ImageUp className="w-4 h-4" /> {uploadingSignature ? "Uploading..." : "Upload signature"}
+          <input data-testid="signature-upload-input" onChange={uploadSignature} disabled={uploadingSignature} accept="image/png,image/jpeg,image/webp" className="sr-only" type="file" />
+        </label>
+      </div>
+
       <h4 className="font-condensed font-black text-2xl mt-10 mb-4">Recent certificates</h4>
       <div className="space-y-3">
         {certificates.length === 0 && <div className="text-sm text-zinc-500">No certificates issued yet.</div>}
@@ -165,13 +210,14 @@ function CertificatesTab({ certificates, programs, refresh }) {
             <div>
               <div className="font-condensed font-black text-xl">{c.intern_name}</div>
               <div className="text-xs text-zinc-500 mt-1">{c.area} · {c.start_date} → {c.end_date} · issued {c.issue_date}</div>
-              <div className="text-xs text-zinc-500 mt-1">{c.intern_email} {c.email_sent && <span className="text-[#34D399]">· email sent</span>}</div>
+              <div className="text-xs text-zinc-500 mt-1">{c.intern_email} {c.email_sent && <span className="text-[#34D399]">· email sent</span>} {c.whatsapp_shared && <span className="text-[#34D399]">· WhatsApp ready</span>}</div>
             </div>
             <div className="flex items-center gap-2">
               <span className="font-mono text-[#FBBF24] text-sm">{c.certificate_id}</span>
-              <a href={`${API}/certificates/${c.certificate_id}/pdf`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-[#272B3C] hover:bg-[#181B26]"><Download className="w-3 h-3" /> PDF</a>
-              <button onClick={() => resend(c.certificate_id)} className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-[#272B3C] hover:bg-[#181B26]"><Send className="w-3 h-3" /> Resend</button>
-              <button onClick={() => remove(c.certificate_id)} className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-red-500/40 text-red-400 hover:bg-red-500/10"><Trash2 className="w-3 h-3" /></button>
+              <a data-testid={`certificate-pdf-${c.certificate_id}`} href={`${API}/certificates/${c.certificate_id}/pdf`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-[#272B3C] hover:bg-[#181B26]"><Download className="w-3 h-3" /> PDF</a>
+              <button data-testid={`certificate-resend-${c.certificate_id}`} onClick={() => resend(c.certificate_id)} className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-[#272B3C] hover:bg-[#181B26]"><Send className="w-3 h-3" /> Resend</button>
+              <button data-testid={`certificate-whatsapp-${c.certificate_id}`} onClick={() => shareWhatsApp(c.certificate_id)} className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-[#34D399]/40 text-[#34D399] hover:bg-[#34D399]/10"><MessageCircle className="w-3 h-3" /> WhatsApp</button>
+              <button data-testid={`certificate-delete-${c.certificate_id}`} onClick={() => remove(c.certificate_id)} className="inline-flex items-center gap-1 text-xs px-3 h-9 rounded-full border border-red-500/40 text-red-400 hover:bg-red-500/10"><Trash2 className="w-3 h-3" /></button>
             </div>
           </div>
         ))}

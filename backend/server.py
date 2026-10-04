@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response, File, UploadFile, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -10,14 +10,20 @@ from datetime import datetime, timezone, timedelta
 import os
 import io
 import uuid
-import base64
 import asyncio
 import logging
 import random
 import string
 import bcrypt
 import jwt
-import resend
+import hashlib
+import secrets
+import re
+import ipaddress
+import requests
+from html import escape
+from html.parser import HTMLParser
+from urllib.parse import urlparse, quote
 
 from certificate_pdf import build_certificate_pdf
 
@@ -26,16 +32,20 @@ load_dotenv(ROOT_DIR / ".env")
 
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@zoomintern.com")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "ZoomAdmin@2026")
-JWT_SECRET = os.environ.get("JWT_SECRET", "change-me")
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
-CEO_NAME = os.environ.get("CEO_NAME", "Abhishek Singh Tomar")
-CEO_TITLE = os.environ.get("CEO_TITLE", "CEO & Founder, ZoomIntern")
-
-if RESEND_API_KEY:
-    resend.api_key = RESEND_API_KEY
+ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
+ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
+JWT_SECRET = os.environ["JWT_SECRET"]
+CEO_NAME = os.environ["CEO_NAME"]
+CEO_TITLE = os.environ["CEO_TITLE"]
+EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+EMAIL_KEY = os.environ["EMERGENT_EMAIL_KEY"]
+EMAIL_FROM_NAME = os.environ["EMAIL_FROM_NAME"]
+EMAIL_REPLY_TO = os.environ.get("EMAIL_REPLY_TO")
+STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
+STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+EMERGENT_KEY = os.environ["EMERGENT_LLM_KEY"]
+APP_NAME = "zoomintern"
+storage_key = None
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -46,6 +56,126 @@ security = HTTPBearer(auto_error=False)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("zoomintern")
+
+
+# ---------- Managed email safety gate ----------
+_SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
+_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
+             "send us your password", "enter your password below", "confirm your card number",
+             "your full card number", "seed phrase", "recovery phrase", "verify your card",
+             "social security number", "confirm your bank details")
+_HOSTISH = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})", re.I)
+
+
+def _host_ok(host: str) -> bool:
+    if not host or "xn--" in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        return not any(host == shortener or host.endswith("." + shortener) for shortener in _SHORTENERS)
+
+
+def _same_site(shown: str, real: str) -> bool:
+    return shown == real or real.endswith("." + shown) or shown.endswith("." + real)
+
+
+class _EmailScan(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tags, self.urls, self.anchors = set(), [], []
+        self._href, self._text = None, []
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.add(tag.lower())
+        self.urls += [value for key, value in attrs if key.lower() in ("href", "src") and value]
+        if tag.lower() == "a":
+            self._href = dict((key.lower(), value) for key, value in attrs).get("href")
+            self._text = []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._href is not None:
+            self.anchors.append((self._href, "".join(self._text)))
+            self._href, self._text = None, []
+
+
+def _assert_safe_email(subject: str, html: str) -> None:
+    scan = _EmailScan()
+    scan.feed(html)
+    if scan.tags & {"form", "input", "textarea", "select"}:
+        raise ValueError("Email content cannot contain forms or input fields")
+    body = f"{subject}\n{html}".lower()
+    if any(phrase in body for phrase in _CRED_ASK):
+        raise ValueError("Email content cannot request credentials")
+    for url in scan.urls:
+        clean_url = url.strip().lower()
+        if clean_url.startswith(("mailto:", "tel:", "cid:", "#")):
+            continue
+        if not clean_url.startswith("https://"):
+            raise ValueError("Email links must use absolute HTTPS URLs")
+        parsed = urlparse(clean_url)
+        if not _host_ok(parsed.hostname or "") or parsed.username is not None:
+            raise ValueError("Email link host is not permitted")
+    for href, text in scan.anchors:
+        real = urlparse(href.strip().lower()).hostname or ""
+        if not real:
+            continue
+        for match in _HOSTISH.finditer(text):
+            if not _same_site(match.group(1).lower(), real):
+                raise ValueError("Email link text does not match its destination")
+
+
+async def _send_managed_email(*, to: str, subject: str, html: str) -> str | None:
+    _assert_safe_email(subject, html)
+    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
+    if EMAIL_REPLY_TO:
+        payload["contact_email"] = EMAIL_REPLY_TO
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as http_client:
+            response = await http_client.post(
+                f"{EMAIL_BASE_URL}/api/v1/email/send",
+                headers={"X-Email-Key": EMAIL_KEY},
+                json=payload,
+            )
+        response.raise_for_status()
+        return response.json().get("id")
+    except Exception as error:
+        logger.error("Managed email delivery failed: %s", error)
+        raise RuntimeError("Email delivery could not be completed") from error
+
+
+# ---------- Managed signature storage ----------
+def _init_storage(force: bool = False) -> str:
+    global storage_key
+    if storage_key and not force:
+        return storage_key
+    response = requests.post(STORAGE_URL + "/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
+    response.raise_for_status()
+    storage_key = response.json()["storage_key"]
+    return storage_key
+
+
+def _put_storage_object(path: str, data: bytes, content_type: str) -> dict:
+    response = requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": _init_storage(), "Content-Type": content_type},
+        data=data,
+        timeout=120,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _get_storage_object(path: str) -> bytes:
+    response = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": _init_storage()}, timeout=60)
+    response.raise_for_status()
+    return response.content
 
 
 # ---------- Models ----------
@@ -114,6 +244,8 @@ class Certificate(BaseModel):
     issue_date: str
     duration_weeks: int = 6
     email_sent: bool = False
+    intern_phone: Optional[str] = None
+    whatsapp_shared: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -125,6 +257,16 @@ class CertificateIn(BaseModel):
     end_date: str
     issue_date: Optional[str] = None
     send_email: bool = True
+    intern_phone: Optional[str] = None
+
+
+class InternAccessRequest(BaseModel):
+    email: EmailStr
+
+
+class InternAccessVerify(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6)
 
 
 # ---------- Auth helpers ----------
@@ -148,11 +290,22 @@ def _create_token(email: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
-async def require_admin(creds: HTTPAuthorizationCredentials = Depends(security)):
-    if not creds:
+def _create_intern_token(email: str) -> str:
+    payload = {
+        "sub": email.lower(),
+        "role": "intern",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+async def require_admin(request: Request, creds: HTTPAuthorizationCredentials = Depends(security)):
+    token = creds.credentials if creds else request.cookies.get("zi_admin_access")
+    if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
-        payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
     email = payload.get("sub")
@@ -162,9 +315,23 @@ async def require_admin(creds: HTTPAuthorizationCredentials = Depends(security))
     return admin
 
 
+async def require_intern(creds: HTTPAuthorizationCredentials = Depends(security)):
+    if not creds:
+        raise HTTPException(status_code=401, detail="Intern access is required")
+    try:
+        payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired intern session")
+    if payload.get("role") != "intern" or not payload.get("sub"):
+        raise HTTPException(status_code=401, detail="Intern access is required")
+    return payload["sub"].lower()
+
+
 # ---------- Startup seeding ----------
 @app.on_event("startup")
 async def seed_data():
+    await db.intern_access_codes.create_index("expires_at", expireAfterSeconds=0)
+    await db.admin_login_attempts.create_index("identifier", unique=True)
     existing = await db.admins.find_one({"email": ADMIN_EMAIL}, {"_id": 0})
     if not existing:
         await db.admins.insert_one({
@@ -174,6 +341,12 @@ async def seed_data():
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
         logger.info(f"Seeded admin: {ADMIN_EMAIL}")
+    elif not _verify_password(ADMIN_PASSWORD, existing["password_hash"]):
+        await db.admins.update_one(
+            {"email": ADMIN_EMAIL},
+            {"$set": {"password_hash": _hash_password(ADMIN_PASSWORD)}},
+        )
+        logger.info("Updated seeded admin password hash")
 
     # Seed default programs if empty
     if await db.programs.count_documents({}) == 0:
@@ -214,11 +387,50 @@ async def _unique_cert_id() -> str:
 
 
 def _verify_url_for(cert_id: str) -> str:
-    # We don't know the public URL from backend; use env or a relative marker.
-    base = os.environ.get("PUBLIC_BASE_URL", "")
-    if base:
-        return f"{base.rstrip('/')}/verify?id={cert_id}"
-    return f"https://zoomintern.app/verify?id={cert_id}"
+    return f"{os.environ['PUBLIC_BASE_URL'].rstrip('/')}/verify?id={cert_id}"
+
+
+async def _signature_image_bytes() -> bytes | None:
+    signature = await db.settings.find_one({"key": "ceo_signature"}, {"_id": 0})
+    if not signature:
+        return None
+    try:
+        return await asyncio.to_thread(_get_storage_object, signature["storage_path"])
+    except Exception as error:
+        logger.warning("Could not load uploaded signature: %s", error)
+        return None
+
+
+def _certificate_html(cert: Certificate) -> str:
+    verify_url = _verify_url_for(cert.certificate_id)
+    name, area = escape(cert.intern_name), escape(cert.area)
+    certificate_id = escape(cert.certificate_id)
+    return f"""
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:Arial,sans-serif;background:#0b0d14;padding:24px;">
+      <tr><td align="center"><table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#12141d;border:1px solid #272b3c;padding:32px;">
+        <tr><td style="font-size:22px;font-weight:800;color:#fbbf24;">ZoomIntern</td></tr>
+        <tr><td style="padding-top:16px;font-size:20px;color:#f8fafc;">Congratulations, {name}!</td></tr>
+        <tr><td style="padding-top:12px;font-size:14px;color:#94a3b8;line-height:1.6;">Your {area} internship certificate is ready. You can open and download its official PDF anytime.</td></tr>
+        <tr><td style="padding-top:20px;"><a href="{verify_url}" style="background:#fbbf24;color:#090a0f;padding:12px 18px;text-decoration:none;font-weight:700;">View certificate PDF</a></td></tr>
+        <tr><td style="padding-top:20px;font-size:12px;color:#94a3b8;">Certificate ID: <strong style="color:#34d399;">{certificate_id}</strong><br/>Sent by ZoomIntern.</td></tr>
+      </table></td></tr>
+    </table>
+    """
+
+
+async def _send_intern_access_code(email: str, code: str) -> None:
+    subject = "Your ZoomIntern portal access code"
+    html = f"""
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:Arial,sans-serif;background:#0b0d14;padding:24px;">
+      <tr><td align="center"><table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#12141d;border:1px solid #272b3c;padding:32px;">
+        <tr><td style="font-size:22px;font-weight:800;color:#fbbf24;">ZoomIntern</td></tr>
+        <tr><td style="padding-top:18px;font-size:15px;color:#f8fafc;">Use this one-time code to open your certificate portal:</td></tr>
+        <tr><td style="padding-top:16px;font-size:28px;letter-spacing:4px;font-weight:800;color:#34d399;">{escape(code)}</td></tr>
+        <tr><td style="padding-top:18px;font-size:12px;color:#94a3b8;">This code expires in 10 minutes. Sent by ZoomIntern.</td></tr>
+      </table></td></tr>
+    </table>
+    """
+    await _send_managed_email(to=email, subject=subject, html=html)
 
 
 # ---------- Public routes ----------
@@ -275,6 +487,7 @@ async def download_certificate_pdf(cert_id: str):
     doc = await db.certificates.find_one({"certificate_id": cert_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Certificate not found")
+    signature_image = await _signature_image_bytes()
     pdf_bytes = build_certificate_pdf(
         intern_name=doc["intern_name"],
         area=doc["area"],
@@ -286,6 +499,7 @@ async def download_certificate_pdf(cert_id: str):
         verify_url=_verify_url_for(doc["certificate_id"]),
         ceo_name=CEO_NAME,
         ceo_title=CEO_TITLE,
+        signature_image=signature_image,
     )
     filename = f"ZoomIntern-{doc['certificate_id']}.pdf"
     return Response(
@@ -295,13 +509,85 @@ async def download_certificate_pdf(cert_id: str):
     )
 
 
+# ---------- Intern portal ----------
+@api_router.post("/intern/access/request")
+async def request_intern_access(body: InternAccessRequest):
+    email = str(body.email).lower()
+    certificate = await db.certificates.find_one({"intern_email": email}, {"_id": 0})
+    # The response remains generic so this endpoint cannot be used to enumerate intern emails.
+    if certificate:
+        code = "".join(secrets.choice(string.digits) for _ in range(6))
+        await db.intern_access_codes.delete_many({"email": email})
+        await db.intern_access_codes.insert_one({
+            "email": email,
+            "code_hash": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        try:
+            await _send_intern_access_code(email, code)
+        except Exception as error:
+            logger.warning("Intern access code could not be delivered: %s", error)
+            await db.intern_access_codes.delete_many({"email": email})
+    return {"status": "If a matching certificate exists, an access code has been sent."}
+
+
+@api_router.post("/intern/access/verify", response_model=TokenOut)
+async def verify_intern_access(body: InternAccessVerify):
+    email = str(body.email).lower()
+    record = await db.intern_access_codes.find_one({"email": email}, {"_id": 0})
+    expires_at = record.get("expires_at") if record else None
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    valid = record and expires_at and expires_at > datetime.now(timezone.utc)
+    submitted_hash = hashlib.sha256(body.code.encode("utf-8")).hexdigest()
+    if not valid or not secrets.compare_digest(record["code_hash"], submitted_hash):
+        raise HTTPException(status_code=401, detail="This access code is invalid or expired")
+    await db.intern_access_codes.delete_many({"email": email})
+    return TokenOut(token=_create_intern_token(email), email=email)
+
+
+@api_router.get("/intern/certificates", response_model=List[Certificate])
+async def list_intern_certificates(email: str = Depends(require_intern)):
+    return await db.certificates.find({"intern_email": email}, {"_id": 0}).sort("created_at", -1).to_list(100)
+
+
 # ---------- Admin routes ----------
 @api_router.post("/admin/login", response_model=TokenOut)
-async def admin_login(body: LoginIn):
-    admin = await db.admins.find_one({"email": body.email}, {"_id": 0})
+async def admin_login(body: LoginIn, response: Response, request: Request):
+    email = str(body.email).lower()
+    identifier = email
+    now = datetime.now(timezone.utc)
+    attempt = await db.admin_login_attempts.find_one({"identifier": identifier}, {"_id": 0})
+    locked_until = attempt.get("locked_until") if attempt else None
+    if locked_until and locked_until.tzinfo is None:
+        locked_until = locked_until.replace(tzinfo=timezone.utc)
+    if locked_until and locked_until > now:
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Try again in 15 minutes.")
+
+    admin = await db.admins.find_one({"email": email}, {"_id": 0})
     if not admin or not _verify_password(body.password, admin["password_hash"]):
+        failed_attempts = (attempt or {}).get("failed_attempts", 0) + 1
+        updates = {
+            "identifier": identifier,
+            "failed_attempts": failed_attempts,
+            "updated_at": now.isoformat(),
+        }
+        if failed_attempts >= 5:
+            updates["locked_until"] = now + timedelta(minutes=15)
+        await db.admin_login_attempts.update_one({"identifier": identifier}, {"$set": updates}, upsert=True)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    await db.admin_login_attempts.delete_many({"identifier": identifier})
     token = _create_token(admin["email"])
+    response.set_cookie(
+        key="zi_admin_access",
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=7 * 24 * 60 * 60,
+        path="/",
+    )
     return TokenOut(token=token, email=admin["email"])
 
 
@@ -373,8 +659,54 @@ async def list_certificates(admin=Depends(require_admin)):
     return docs
 
 
+@api_router.get("/admin/signature")
+async def get_signature(admin=Depends(require_admin)):
+    signature = await db.settings.find_one({"key": "ceo_signature"}, {"_id": 0})
+    if not signature:
+        return {"uploaded": False}
+    return {
+        "uploaded": True,
+        "filename": signature["filename"],
+        "uploaded_at": signature["uploaded_at"],
+    }
+
+
+@api_router.post("/admin/signature")
+async def upload_signature(file: UploadFile = File(...), admin=Depends(require_admin)):
+    allowed_types = {"image/png", "image/jpeg", "image/webp"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Upload a PNG, JPEG, or WEBP signature image")
+    data = await file.read()
+    if not data or len(data) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Signature image must be between 1 byte and 2 MB")
+    extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[file.content_type]
+    storage_path = f"{APP_NAME}/uploads/signatures/{uuid.uuid4()}.{extension}"
+    try:
+        result = await asyncio.to_thread(_put_storage_object, storage_path, data, file.content_type)
+    except Exception as error:
+        logger.error("Signature upload failed: %s", error)
+        raise HTTPException(status_code=502, detail="Signature upload could not be completed") from error
+    now = datetime.now(timezone.utc).isoformat()
+    await db.settings.update_one(
+        {"key": "ceo_signature"},
+        {"$set": {
+            "key": "ceo_signature",
+            "storage_path": result["path"],
+            "filename": file.filename or f"ceo-signature.{extension}",
+            "content_type": file.content_type,
+            "size": result["size"],
+            "uploaded_at": now,
+            "is_deleted": False,
+        }},
+        upsert=True,
+    )
+    return {"uploaded": True, "filename": file.filename or f"ceo-signature.{extension}", "uploaded_at": now}
+
+
 @api_router.post("/admin/certificates", response_model=Certificate)
 async def issue_certificate(body: CertificateIn, admin=Depends(require_admin)):
+    if body.intern_phone and not re.fullmatch(r"\+[1-9]\d{7,14}", body.intern_phone.strip()):
+        raise HTTPException(status_code=400, detail="WhatsApp number must use international format, for example +14155552671")
     # Calc weeks
     try:
         sd = datetime.fromisoformat(body.start_date)
@@ -393,6 +725,7 @@ async def issue_certificate(body: CertificateIn, admin=Depends(require_admin)):
         end_date=body.end_date,
         issue_date=issue,
         duration_weeks=weeks,
+        intern_phone=body.intern_phone.strip() if body.intern_phone else None,
     )
     await db.certificates.insert_one(cert.model_dump())
 
@@ -421,6 +754,24 @@ async def resend_email(cert_id: str, admin=Depends(require_admin)):
         raise HTTPException(status_code=500, detail=f"Email send failed: {e}")
 
 
+@api_router.post("/admin/certificates/{cert_id}/whatsapp")
+async def share_certificate_whatsapp(cert_id: str, admin=Depends(require_admin)):
+    doc = await db.certificates.find_one({"certificate_id": cert_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    phone = doc.get("intern_phone")
+    if not phone:
+        raise HTTPException(status_code=400, detail="Add the intern's WhatsApp number when issuing the certificate")
+    number = re.sub(r"\D", "", phone)
+    certificate_url = _verify_url_for(cert_id)
+    message = (
+        f"Congratulations {doc['intern_name']}! Your ZoomIntern certificate ({cert_id}) is ready. "
+        f"Open and download the official PDF: {certificate_url}"
+    )
+    await db.certificates.update_one({"certificate_id": cert_id}, {"$set": {"whatsapp_shared": True}})
+    return {"url": f"https://wa.me/{number}?text={quote(message)}"}
+
+
 @api_router.delete("/admin/certificates/{cert_id}")
 async def delete_certificate(cert_id: str, admin=Depends(require_admin)):
     res = await db.certificates.delete_one({"certificate_id": cert_id})
@@ -428,55 +779,11 @@ async def delete_certificate(cert_id: str, admin=Depends(require_admin)):
 
 
 async def _send_certificate_email(cert: Certificate):
-    if not RESEND_API_KEY:
-        raise RuntimeError("RESEND_API_KEY not configured")
-    pdf_bytes = build_certificate_pdf(
-        intern_name=cert.intern_name,
-        area=cert.area,
-        start_date=cert.start_date,
-        end_date=cert.end_date,
-        issue_date=cert.issue_date,
-        duration_weeks=cert.duration_weeks,
-        certificate_id=cert.certificate_id,
-        verify_url=_verify_url_for(cert.certificate_id),
-        ceo_name=CEO_NAME,
-        ceo_title=CEO_TITLE,
+    await _send_managed_email(
+        to=str(cert.intern_email),
+        subject=f"Your ZoomIntern certificate — {cert.certificate_id}",
+        html=_certificate_html(cert),
     )
-    attachment = {
-        "filename": f"ZoomIntern-{cert.certificate_id}.pdf",
-        "content": list(pdf_bytes),
-    }
-    html = f"""
-    <table width="100%" cellpadding="0" cellspacing="0" style="font-family:Arial,sans-serif;background:#0b0d14;color:#f8fafc;padding:24px;">
-      <tr><td align="center">
-        <table width="560" cellpadding="0" cellspacing="0" style="background:#12141d;border:1px solid #272B3C;border-radius:14px;padding:32px;">
-          <tr><td style="font-size:22px;font-weight:800;color:#FBBF24;letter-spacing:-0.5px;">ZoomIntern</td></tr>
-          <tr><td style="padding-top:16px;font-size:20px;color:#f8fafc;">Congratulations, {cert.intern_name}!</td></tr>
-          <tr><td style="padding-top:12px;font-size:14px;color:#94a3b8;line-height:1.6;">
-            You have successfully completed the <b style="color:#f8fafc;">{cert.area}</b> internship at ZoomIntern
-            ({cert.start_date} → {cert.end_date}). Your official certificate is attached to this email.
-          </td></tr>
-          <tr><td style="padding-top:20px;font-size:13px;color:#94a3b8;">
-            Certificate ID: <b style="color:#34D399;">{cert.certificate_id}</b><br/>
-            Verify at: {_verify_url_for(cert.certificate_id)}
-          </td></tr>
-          <tr><td style="padding-top:24px;font-size:13px;color:#94a3b8;">
-            Warm regards,<br/>
-            <b style="color:#f8fafc;">{CEO_NAME}</b><br/>
-            {CEO_TITLE}
-          </td></tr>
-        </table>
-      </td></tr>
-    </table>
-    """
-    params = {
-        "from": SENDER_EMAIL,
-        "to": [cert.intern_email],
-        "subject": f"Your ZoomIntern Certificate — {cert.certificate_id}",
-        "html": html,
-        "attachments": [attachment],
-    }
-    await asyncio.to_thread(resend.Emails.send, params)
 
 
 app.include_router(api_router)
@@ -484,7 +791,7 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=os.environ["CORS_ORIGINS"].split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -113,6 +113,28 @@ def _draw_signature(c: canvas.Canvas, cx: float, baseline: float, name: str):
     c.restoreState()
 
 
+def _draw_signature_image(c: canvas.Canvas, image_bytes: bytes, cx: float, baseline: float) -> bool:
+    """Render an uploaded signature without distorting its aspect ratio."""
+    try:
+        image = ImageReader(io.BytesIO(image_bytes))
+        width, height = image.getSize()
+        scale = min(180 / width, 58 / height)
+        draw_width, draw_height = width * scale, height * scale
+        c.drawImage(
+            image,
+            cx - draw_width / 2,
+            baseline - 8,
+            width=draw_width,
+            height=draw_height,
+            mask="auto",
+            preserveAspectRatio=True,
+            anchor="c",
+        )
+        return True
+    except Exception:
+        return False
+
+
 def build_certificate_pdf(
     intern_name: str,
     area: str,
@@ -124,6 +146,7 @@ def build_certificate_pdf(
     verify_url: str,
     ceo_name: str,
     ceo_title: str,
+    signature_image: bytes | None = None,
 ) -> bytes:
     buf = io.BytesIO()
     page = landscape(A4)
@@ -222,7 +245,9 @@ def build_certificate_pdf(
 
     # Signature (right)
     sig_cx = w - 180
-    _draw_signature(c, sig_cx, footer_y + 40, ceo_name)
+    signature_drawn = bool(signature_image) and _draw_signature_image(c, signature_image, sig_cx, footer_y + 40)
+    if not signature_drawn:
+        _draw_signature(c, sig_cx, footer_y + 40, ceo_name)
     c.setStrokeColor(NAVY)
     c.setLineWidth(0.6)
     c.line(sig_cx - 110, footer_y + 22, sig_cx + 110, footer_y + 22)

@@ -41,6 +41,13 @@ export default function Header() {
           >
             Admin
           </Link>
+          <Link
+            to="/portal"
+            data-testid="nav-intern-portal-link"
+            className={`hover:text-[#FBBF24] transition ${pathname.startsWith("/portal") ? "text-[#FBBF24]" : "text-zinc-300"}`}
+          >
+            My certificates
+          </Link>
         </nav>
 
         <div className="flex items-center gap-3">
