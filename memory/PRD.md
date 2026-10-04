@@ -32,6 +32,8 @@ Build an internship-providing website (ZoomIntern) with an admin portal where th
 - Program Classroom (`/programs/:programId`): public class sequencing, YouTube lessons, configurable pass-score quizzes, and mixed MCQ/descriptive answers
 - Admin Classroom Builder (`/admin/programs/:programId/classes`): add/delete classes, YouTube links, class order, selected class-level PDF project requirements, and final-project settings
 - Private project submission system: PDF-only class/final uploads, application-email validation, managed object storage, opaque receipt tokens, and protected PDF download routes for interns/admins
+- Certificate refinements (2026-06): internship area rendered in bold inline, intern name in plain (non-bold) serif, bottom ZI seal replaced with the official Ministry of MSME logo, and the CEO's handwritten signature (अभिषेक सिंह) bundled as the default signature asset
+- Admin review workflow (2026-06): per-program "Submissions & reviews" section in the Classroom builder to view descriptive quiz answers and project PDFs, with Approve / Request-changes controls and intern feedback notes
 
 ## Test Results
 - Iteration 1: 9/9 backend feature/regression tests passed, including managed email delivery, signature upload, PDF output, WhatsApp handoff, intern access request, invalid code handling, and public verification. Report: `/app/test_reports/iteration_1.json`.
@@ -44,8 +46,7 @@ See `/app/memory/test_credentials.md`.
 ## Backlog / Next
 - P1: Add a custom verified sending domain and reply inbox when ZoomIntern has one.
 - P1: Optional direct WhatsApp Business provider integration for automated sends; current implementation opens a compliant prefilled WhatsApp handoff for the admin to review and send.
-- P1: Add an admin review screen for descriptive quiz answers and submitted project PDFs, with approve/request-changes statuses.
-- P2: Gate certificate issuance behind final-project approval and required quiz completion.
+- P2: Gate certificate issuance behind final-project approval and required quiz completion (now that review statuses exist).
 - P2: Certificate revocation reason/history and a public revocation status view.
 
 ## Last Validation

@@ -294,6 +294,35 @@ class ProjectSubmissionOut(BaseModel):
 
 class ProjectSubmissionAdmin(ProjectSubmissionOut):
     intern_email: EmailStr
+    review_status: str = "pending"
+    review_feedback: Optional[str] = None
+    reviewed_at: Optional[str] = None
+
+
+class DescriptiveAnswerOut(BaseModel):
+    question_id: str
+    prompt: str
+    answer: str
+
+
+class QuizReviewOut(BaseModel):
+    id: str
+    program_id: str
+    lesson_id: str
+    lesson_title: str
+    intern_email: EmailStr
+    score: Optional[int] = None
+    passed: Optional[bool] = None
+    submitted_at: str
+    review_status: str = "pending"
+    review_feedback: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    descriptive_answers: List[DescriptiveAnswerOut] = Field(default_factory=list)
+
+
+class ReviewIn(BaseModel):
+    status: Literal["approved", "changes_requested"]
+    feedback: Optional[str] = Field(default=None, max_length=2000)
 
 
 class Application(BaseModel):
@@ -523,12 +552,15 @@ async def _ensure_program_application(program_id: str, email: str) -> None:
 
 async def _signature_image_bytes() -> bytes | None:
     signature = await db.settings.find_one({"key": "ceo_signature"}, {"_id": 0})
-    if not signature:
-        return None
+    if signature:
+        try:
+            return await asyncio.to_thread(_get_storage_object, signature["storage_path"])
+        except Exception as error:
+            logger.warning("Could not load uploaded signature: %s", error)
+    bundled = Path(__file__).resolve().parent / "assets" / "ceo_signature.png"
     try:
-        return await asyncio.to_thread(_get_storage_object, signature["storage_path"])
-    except Exception as error:
-        logger.warning("Could not load uploaded signature: %s", error)
+        return bundled.read_bytes()
+    except Exception:
         return None
 
 
@@ -679,6 +711,8 @@ async def submit_project_pdf(
         "status": "submitted",
         "is_deleted": False,
         "submitted_at": submitted_at,
+        "review_status": "pending",
+        "review_feedback": None,
     }
     await db.project_submissions.insert_one(record)
     return ProjectSubmissionOut(
@@ -950,6 +984,100 @@ async def download_admin_project_pdf(submission_id: str, admin=Depends(require_a
         content=data,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@api_router.patch("/admin/project-submissions/{submission_id}/review", response_model=ProjectSubmissionAdmin)
+async def review_project_submission(submission_id: str, body: ReviewIn, admin=Depends(require_admin)):
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.project_submissions.update_one(
+        {"id": submission_id, "is_deleted": False},
+        {"$set": {"review_status": body.status, "review_feedback": body.feedback, "reviewed_at": now}},
+    )
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Project submission not found")
+    doc = await db.project_submissions.find_one(
+        {"id": submission_id}, {"_id": 0, "receipt_hash": 0, "storage_path": 0}
+    )
+    return doc
+
+
+@api_router.get("/admin/programs/{program_id}/quiz-submissions", response_model=List[QuizReviewOut])
+async def list_quiz_submissions(program_id: str, admin=Depends(require_admin)):
+    lessons = await db.lessons.find({"program_id": program_id}, {"_id": 0}).to_list(500)
+    prompt_by_qid = {}
+    descriptive_qids = {}
+    title_by_lesson = {}
+    for lesson in lessons:
+        title_by_lesson[lesson["id"]] = lesson.get("title", "")
+        descriptive_qids[lesson["id"]] = set()
+        for question in lesson.get("quiz_questions", []):
+            prompt_by_qid[question["id"]] = question.get("prompt", "")
+            if question.get("question_type") == "descriptive":
+                descriptive_qids[lesson["id"]].add(question["id"])
+    docs = await db.quiz_submissions.find(
+        {"program_id": program_id}, {"_id": 0}
+    ).sort("submitted_at", -1).to_list(2000)
+    reviews = []
+    for doc in docs:
+        lesson_id = doc.get("lesson_id")
+        descriptive_set = descriptive_qids.get(lesson_id, set())
+        descriptive_answers = [
+            DescriptiveAnswerOut(
+                question_id=answer["question_id"],
+                prompt=prompt_by_qid.get(answer["question_id"], "Descriptive question"),
+                answer=answer["answer"],
+            )
+            for answer in doc.get("answers", [])
+            if answer["question_id"] in descriptive_set
+        ]
+        if not descriptive_answers:
+            continue
+        reviews.append(QuizReviewOut(
+            id=doc["id"],
+            program_id=doc["program_id"],
+            lesson_id=lesson_id,
+            lesson_title=title_by_lesson.get(lesson_id, ""),
+            intern_email=doc["intern_email"],
+            score=doc.get("score"),
+            passed=doc.get("passed"),
+            submitted_at=doc["submitted_at"],
+            review_status=doc.get("review_status", "pending"),
+            review_feedback=doc.get("review_feedback"),
+            reviewed_at=doc.get("reviewed_at"),
+            descriptive_answers=descriptive_answers,
+        ))
+    return reviews
+
+
+@api_router.patch("/admin/quiz-submissions/{submission_id}/review", response_model=QuizReviewOut)
+async def review_quiz_submission(submission_id: str, body: ReviewIn, admin=Depends(require_admin)):
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.quiz_submissions.update_one(
+        {"id": submission_id},
+        {"$set": {
+            "review_status": body.status,
+            "review_feedback": body.feedback,
+            "reviewed_at": now,
+            "descriptive_pending_review": False,
+        }},
+    )
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Quiz submission not found")
+    doc = await db.quiz_submissions.find_one({"id": submission_id}, {"_id": 0})
+    lesson = await db.lessons.find_one({"id": doc.get("lesson_id")}, {"_id": 0}) or {}
+    prompt_by_qid = {q["id"]: q.get("prompt", "") for q in lesson.get("quiz_questions", [])}
+    descriptive_qids = {q["id"] for q in lesson.get("quiz_questions", []) if q.get("question_type") == "descriptive"}
+    descriptive_answers = [
+        DescriptiveAnswerOut(question_id=a["question_id"], prompt=prompt_by_qid.get(a["question_id"], "Descriptive question"), answer=a["answer"])
+        for a in doc.get("answers", []) if a["question_id"] in descriptive_qids
+    ]
+    return QuizReviewOut(
+        id=doc["id"], program_id=doc["program_id"], lesson_id=doc.get("lesson_id"),
+        lesson_title=lesson.get("title", ""), intern_email=doc["intern_email"],
+        score=doc.get("score"), passed=doc.get("passed"), submitted_at=doc["submitted_at"],
+        review_status=doc.get("review_status", "pending"), review_feedback=doc.get("review_feedback"),
+        reviewed_at=doc.get("reviewed_at"), descriptive_answers=descriptive_answers,
     )
 
 

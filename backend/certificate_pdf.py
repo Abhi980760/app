@@ -6,6 +6,7 @@ serif typography, a QR code, and an inked stylized signature for the CEO.
 from __future__ import annotations
 
 import io
+import os
 from datetime import datetime
 
 import qrcode
@@ -22,6 +23,28 @@ INK = HexColor("#111827")
 MUTED = HexColor("#64748B")
 CREAM = HexColor("#FBF9F2")
 ACCENT = HexColor("#0F2A47")
+
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+
+
+def _draw_msme_logo(c: canvas.Canvas, cx: float, cy: float, size: float = 64) -> bool:
+    """Draw the official MSME logo centered on (cx, cy), preserving aspect ratio."""
+    path = os.path.join(ASSETS_DIR, "msme_logo.png")
+    try:
+        image = ImageReader(path)
+        c.drawImage(
+            image,
+            cx - size / 2,
+            cy - size / 2,
+            width=size,
+            height=size,
+            mask="auto",
+            preserveAspectRatio=True,
+            anchor="c",
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _fmt_date(iso: str) -> str:
@@ -184,7 +207,7 @@ def build_certificate_pdf(
 
     # Intern name
     c.setFillColor(NAVY)
-    c.setFont("Times-BoldItalic", 38)
+    c.setFont("Times-Roman", 36)
     c.drawCentredString(w / 2, h - 275, intern_name)
     # Underline for name
     c.setStrokeColor(GOLD)
@@ -194,13 +217,21 @@ def build_certificate_pdf(
     c.setFillColor(GOLD)
     c.circle(w / 2, h - 286, 2.4, fill=1, stroke=0)
 
-    # Body text (two lines, centered)
+    # Body text (two lines, centered) — internship area rendered in bold inline
+    c.setFillColor(INK)
+    prefix = f"for successfully completing the {duration_weeks}-week Internship Program in "
+    prefix_w = c.stringWidth(prefix, "Helvetica", 12)
+    area_w = c.stringWidth(area, "Helvetica-Bold", 12)
+    start_x = w / 2 - (prefix_w + area_w) / 2
+    c.setFont("Helvetica", 12)
+    c.drawString(start_x, h - 320, prefix)
+    c.setFont("Helvetica-Bold", 12)
+    c.setFillColor(NAVY)
+    c.drawString(start_x + prefix_w, h - 320, area)
     c.setFillColor(INK)
     c.setFont("Helvetica", 12)
-    line1 = f"for successfully completing the {duration_weeks}-week Internship Program in {area}"
     line2 = "at ZoomIntern, and demonstrating dedication, professionalism"
     line3 = "and a strong commitment to learning throughout the program."
-    c.drawCentredString(w / 2, h - 320, line1)
     c.drawCentredString(w / 2, h - 338, line2)
     c.drawCentredString(w / 2, h - 356, line3)
 
@@ -240,8 +271,9 @@ def build_certificate_pdf(
     c.drawString(170, footer_y + 18, "Scan the QR to verify this")
     c.drawString(170, footer_y + 8, "certificate instantly")
 
-    # Center seal
-    _draw_seal(c, w / 2, footer_y + 25, r=28)
+    # Center: official MSME logo (replaces the ZI verification seal)
+    if not _draw_msme_logo(c, w / 2, footer_y + 25, size=70):
+        _draw_seal(c, w / 2, footer_y + 25, r=28)
 
     # Signature (right)
     sig_cx = w - 180
