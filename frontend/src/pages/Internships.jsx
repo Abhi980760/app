@@ -12,7 +12,20 @@ export default function Internships() {
   const [selected, setSelected] = useState(null);
 
   useEffect(() => {
-    api.get("/programs").then((r) => setPrograms(r.data)).catch(() => {});
+  api.get("/programs")
+  .then((r) => {
+    const data = Array.isArray(r.data)
+      ? r.data
+      : Array.isArray(r.data?.programs)
+        ? r.data.programs
+        : [];
+
+    setPrograms(data);
+  })
+  .catch((error) => {
+    console.error("Failed to load programs:", error);
+    setPrograms([]);
+  });
   }, []);
 
   const areas = ["All", ...new Set(programs.map((p) => p.area))];
