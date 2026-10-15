@@ -26,7 +26,3 @@
   ]
 }
 
-   - which services should be **public** and on what path, and which should stay internal,
-   - the **bindings** you added, i.e. which service calls which.
-
-   Ask about anything you had to guess rather than assuming it.
