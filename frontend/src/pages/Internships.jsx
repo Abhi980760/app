@@ -68,7 +68,7 @@ export default function Internships() {
               </div>
               <p className="text-sm text-zinc-400 mt-3 flex-1">{p.description}</p>
               <div className="flex flex-wrap gap-2 mt-4">
-                {(p.tags || []).map((t) => (
+                {(Array.isArray(p.tags) ? p.tags : []).map((t) => (
                   <span key={t} className="text-xs px-2.5 py-1 rounded-md bg-[#181B26] border border-[#272B3C]">{t}</span>
                 ))}
               </div>
