@@ -225,7 +225,9 @@ function ProgramCard({ program, highlighted }) {
         <span>⏱ {program.duration_weeks} weeks</span>
       </div>
       <div className="flex flex-wrap gap-2 mt-4">
-        {(program.tags || []).slice(0, 3).map((t) => (
+        {(Array.isArray(program.tags) ? program.tags : [])
+  .slice(0, 3)
+  .map((t) => (
           <span key={t} className="text-xs px-2.5 py-1 rounded-md bg-[#181B26] border border-[#272B3C]">{t}</span>
         ))}
       </div>
