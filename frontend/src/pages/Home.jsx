@@ -9,7 +9,20 @@ export default function Home() {
   const [programs, setPrograms] = useState([]);
 
   useEffect(() => {
-    api.get("/programs").then((r) => setPrograms(r.data.slice(0, 3))).catch(() => {});
+     api.get("/programs")
+    .then((r) => {
+      const data = Array.isArray(r.data)
+        ? r.data
+        : Array.isArray(r.data?.programs)
+          ? r.data.programs
+          : [];
+
+      setPrograms(data.slice(0, 3));
+    })
+    .catch((error) => {
+      console.error("Failed to load programs:", error);
+      setPrograms([]);
+    });
   }, []);
 
   return (
