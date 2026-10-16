@@ -11,19 +11,39 @@ export default function AdminLogin() {
   const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const r = await api.post("/admin/login", { email, password });
-      saveToken(r.data.token);
-      toast.success("Welcome back");
-      navigate("/admin");
-    } catch {
-      toast.error("Invalid credentials");
-    } finally {
-      setLoading(false);
+  e.preventDefault();
+  setLoading(true);
+
+  try {
+    const r = await api.post("/admin/login", {
+      email: email.trim(),
+      password,
+    });
+
+    if (!r.data?.token) {
+      toast.error("Login response mein token nahi mila.");
+      return;
     }
-  };
+
+    saveToken(r.data.token);
+    toast.success("Welcome back");
+    navigate("/admin");
+  } catch (error) {
+    const status = error?.response?.status;
+
+    console.error("Admin login failed. HTTP status:", status ?? "No response");
+
+    if (status === 401 || status === 403) {
+      toast.error("Email/password reject ho rahe hain.");
+    } else if (!error?.response) {
+      toast.error("Server se connection nahi ho raha.");
+    } else {
+      toast.error(`Login server error (${status}).`);
+    }
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen flex items-center justify-center px-6 bg-[#090A0F]">
